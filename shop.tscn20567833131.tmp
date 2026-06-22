@@ -1,0 +1,465 @@
+[gd_scene format=3 uid="uid://b8bel5gqsi2lb"]
+
+[ext_resource type="Texture2D" uid="uid://dmqojsr5t78vt" path="res://Gemini_Generated_Image_txm8ovtxm8ovtxm8.png" id="1_myf4l"]
+[ext_resource type="Texture2D" uid="uid://djdicoeayuoeq" path="res://Gemini_Generated_Image_p7y601p7y601p7y6.png" id="2_p5a0g"]
+[ext_resource type="FontFile" uid="uid://sualh4l2w036" path="res://ofont.ru_Downcome.ttf" id="3_xqmyw"]
+[ext_resource type="AudioStream" uid="uid://buj55d55yge5x" path="res://sound1.mp3" id="4_sw5c6"]
+[ext_resource type="PackedScene" uid="uid://cai2t0isx6j8k" path="res://snack_bar.fbx" id="6_e23gp"]
+[ext_resource type="AudioStream" uid="uid://bsjnma7ui1vj" path="res://music.mp3" id="7_rrolr"]
+[ext_resource type="Texture2D" uid="uid://c463wmk5yo0yo" path="res://Gemini_Generated_Image_9e8lgo9e8lgo9e8l.png" id="8_gldgk"]
+
+[sub_resource type="Environment" id="Environment_763b7"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_p5a0g"]
+albedo_texture = ExtResource("1_myf4l")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_tuxin"]
+albedo_texture = ExtResource("2_p5a0g")
+
+[sub_resource type="GDScript" id="GDScript_8lh4o"]
+script/source = "extends CharacterBody3D
+
+@export var speed = 5.0
+var current_madness = 0.0
+
+@onready var madness_ui = get_tree().root.find_child(\"MadnessEffect\", true, false)
+
+func _ready():
+	add_to_group(\"player\")
+
+func _physics_process(delta):
+	# WASD Движение
+	var input_dir = Vector2.ZERO
+	if Input.is_key_pressed(KEY_W): input_dir.y -= 1
+	if Input.is_key_pressed(KEY_S): input_dir.y += 1
+	if Input.is_key_pressed(KEY_A): input_dir.x -= 1
+	if Input.is_key_pressed(KEY_D): input_dir.x += 1
+	
+	var dir = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	velocity.x = dir.x * speed
+	velocity.z = dir.z * speed
+	
+	if not is_on_floor(): velocity.y -= 20.0 * delta
+	move_and_slide()
+	
+	# --- ЛОГИКА БЕЗУМИЯ (10 очков за 60 секунд) ---
+	# 10 / 60 = 0.1666...
+	current_madness = move_toward(current_madness, 100.0, 0.1667 * delta)
+		
+	# Визуальный эффект (Рожи после 70 безумия)
+	if madness_ui:
+		# Начинаем проявлять эффект только после 70
+		# clamp вернет 0, если madness < 70, и пойдет вверх до 1.0
+		var madness_alpha = clamp((current_madness - 70.0) / 30.0, 0.0, 1.0)
+		madness_ui.modulate.a = madness_alpha
+
+func get_madness_percent():
+	return current_madness
+"
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_il0eq"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_acxsc"]
+
+[sub_resource type="GDScript" id="GDScript_k3iel"]
+script/source = "extends Camera3D
+
+# --- Настройки ---
+const MOUSE_SENS = 0.12
+
+# --- Система выживания ---
+var hunger = 100.0
+var fog_timer = 100.0
+const HUNGER_DECAY = 0.8
+const FOG_DECAY = 1.2
+
+# --- Настройки покачивания ---
+const BOB_FREQ = 2.4
+const BOB_AMP = 0.06
+var t_bob = 0.0
+
+@onready var hunger_bar = get_node_or_null(\"player/CharacterBody3D/Camera3D/hud/Interface/hungry\") 
+@onready var fog_bar = get_node_or_null(\"player/CharacterBody3D/Camera3D/hud/Interface/FogLabel\")
+
+func _ready():
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _input(event):
+	# Вращение камеры
+	if event is InputEventMouseMotion:
+		# Вращаем родителя (игрока) по горизонтали, если он есть
+		if get_parent() is Node3D:
+			get_parent().rotate_y(deg_to_rad(-event.relative.x * MOUSE_SENS))
+		
+		# Саму камеру вращаем по вертикали
+		rotate_x(deg_to_rad(-event.relative.y * MOUSE_SENS))
+		rotation.x = clamp(rotation.x, deg_to_rad(-85), deg_to_rad(85))
+
+func _process(delta):
+	# 1. Системы выживания
+	_process_survival(delta)
+	
+	# 2. Эффект покачивания (теперь зависит от скорости родителя)
+	_handle_head_bob(delta)
+
+# --- ИСПРАВЛЕННЫЕ ПУТИ ---
+# Теперь hunger ссылается на hungry, а fog на FogLabel
+@onready var hunger_label = get_node_or_null(\"hud/Interface/hungry\") 
+
+# ... (остальной код до _process_survival оставляешь без изменений) ...
+
+func _process_survival(delta):
+	hunger -= HUNGER_DECAY * delta
+	fog_timer -= FOG_DECAY * delta
+	
+	# Обновляем текст на экране, превращая числа в строку (str) и отбрасывая дроби (int)
+	if hunger_label: 
+		hunger_label.text = \"Голод: \" + str(int(hunger)) + \"%\"
+		
+	
+	# Проверки на смерть
+	if hunger <= 0:
+		print(\"Умер от голода\")
+		_go_to_menu()
+	
+	if fog_timer <= 0:
+		print(\"THE FOG IS HERE\")
+# НОВАЯ ФУНКЦИЯ ДЛЯ ПЕРЕХОДА В МЕНЮ
+func _go_to_menu():
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE # Возвращаем курсор
+	get_tree().change_scene_to_file(\"res://menu.tscn\") # Укажи точный путь к сцене меню
+
+func _handle_head_bob(delta):
+	var parent = get_parent()
+	# Проверяем, движется ли родитель (CharacterBody3D)
+	if parent is CharacterBody3D and parent.is_on_floor() and parent.velocity.length() > 0.1:
+		t_bob += delta * parent.velocity.length()
+	else:
+		t_bob = move_toward(t_bob, 0, delta * 2)
+	
+	# Смещаем только локальную позицию камеры
+	transform.origin.y = sin(t_bob * BOB_FREQ) * BOB_AMP
+	transform.origin.x = cos(t_bob * BOB_FREQ / 2) * BOB_AMP
+
+func add_food(amount):
+	hunger = clamp(hunger + amount, 0, 100)
+"
+
+[sub_resource type="GDScript" id="GDScript_2807j"]
+script/source = "extends Area3D
+
+@export var food_value = 10.0 # Сколько голода восстановит этот предмет
+
+func _ready():
+	# Подключаем сигнал: когда какое-то тело входит в зону Area3D
+	body_entered.connect(_on_body_entered)
+
+func _on_body_entered(body):
+	# Проверяем, что вошедший объект — это игрок
+	if body is CharacterBody3D:
+		# Ищем камеру внутри игрока, так как шкала голода у нас в скрипте камеры
+		# Путь: Игрок -> Camera3D
+		var camera = body.get_node_or_null(\"Camera3D\")
+		
+		if camera and camera.has_method(\"add_food\"):
+			# Вызываем функцию добавления еды, которую мы писали ранее
+			camera.add_food(food_value)
+			print(\"Подобрал батончик! +10 к еде\")
+			
+			# Удаляем ТОЛЬКО этот конкретный объект из игры
+			queue_free()
+"
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_u7exk"]
+
+[sub_resource type="Environment" id="Environment_db3q1"]
+fog_enabled = true
+fog_light_energy = 0.53
+fog_density = 1.0
+fog_height = 271.31
+volumetric_fog_enabled = true
+volumetric_fog_density = 1.0
+volumetric_fog_albedo = Color(0.14406255, 0.14406255, 0.14406255, 1)
+volumetric_fog_emission = Color(0, 0.26907012, 0, 1)
+volumetric_fog_length = 0.01
+volumetric_fog_detail_spread = 6.0
+volumetric_fog_ambient_inject = 16.0
+
+[sub_resource type="CameraAttributesPractical" id="CameraAttributesPractical_8f8xc"]
+
+[sub_resource type="Compositor" id="Compositor_g4q3a"]
+
+[sub_resource type="GDScript" id="GDScript_myf4l"]
+script/source = "extends Node3D
+
+# --- 1. НАСТРОЙКИ ---
+const SEGMENT_WIDTH = 11      
+const SEGMENT_HEIGHT = 15     
+const CELL_SIZE_X = 8.6       
+const CELL_SIZE_Z = 11.0      
+const START_POS = Vector3(0, 0, -5) 
+
+const CHUNK_VISIBLE_DISTANCE = 60.0 
+const PHANTOM_COUNT = 5             
+
+const CEILING_Y = 30.0        # Высота 30 метров
+const WALL_SCALE_Y = 15.0     # Растягиваем стены под высоту
+
+# --- 2. РЕСУРСЫ ---
+@onready var wall_scene = preload(\"res://shopwall.tscn\")     
+@onready var edge_wall_scene = preload(\"res://wallshop.tscn\") 
+@onready var floor_scene = preload(\"res://shopfloor.tscn\")
+@onready var snack_scene = preload(\"res://Snack.tscn\")
+@onready var cart_scene = preload(\"res://cart.tscn\")
+@onready var mannequin_scene = preload(\"res://mannequin.tscn\") # ТВОЙ НОВЫЙ МОНСТР
+
+# --- 3. ПЕРЕМЕННЫЕ (ВОТ ТУТ БЫЛА ОШИБКА СО СКРИНА!) ---
+# --- 3. ПЕРЕМЕННЫЕ ---
+var last_real_z = 0.0
+var last_phantom_z = 0.0
+var phantom_segments = [] 
+var real_segments = [] 
+var hunger = 100.0
+@onready var status_label = Label.new()
+
+# --- ЦИКЛЫ ---
+
+func _ready():
+	_setup_ui()
+	_spawn_real_segment()
+	
+	last_phantom_z = last_real_z
+	for i in range(PHANTOM_COUNT):
+		_spawn_phantom_segment()
+	
+	var player = get_tree().get_first_node_in_group(\"player\")
+	if player:
+		var c_x = int(SEGMENT_WIDTH / 2) * CELL_SIZE_X
+		player.global_position = START_POS + Vector3(c_x, 2.0, 5.0)
+
+func _process(delta):
+	var player = get_tree().get_first_node_in_group(\"player\")
+	if not player: return
+
+	if player.global_position.z > last_real_z - CHUNK_VISIBLE_DISTANCE:
+		_replace_phantom_with_real()
+
+	hunger -= delta * 0.4
+	status_label.text = \"ГОЛОД: %d%%\" % int(hunger)
+	if hunger <= 0: _game_over(\"Голодная смерть\")
+
+# --- ГЕНЕРАЦИЯ ---
+
+func _spawn_phantom_segment():
+	var phantom_node = Node3D.new()
+	add_child(phantom_node)
+	phantom_node.global_position = START_POS + Vector3(0, 0, last_phantom_z)
+	
+	for x in [0, SEGMENT_WIDTH - 1, int(SEGMENT_WIDTH/2)]:
+		var pos = Vector3(x * CELL_SIZE_X, 0, 0)
+		_add_obj(floor_scene, phantom_node, pos)
+		_add_obj(floor_scene, phantom_node, pos + Vector3(0, CEILING_Y, 0))
+	
+	phantom_segments.append(phantom_node)
+	last_phantom_z += SEGMENT_HEIGHT * CELL_SIZE_Z
+
+func _spawn_real_segment():
+	var segment_node = Node3D.new()
+	add_child(segment_node)
+	segment_node.global_position = START_POS + Vector3(0, 0, last_real_z)
+	real_segments.append(segment_node)
+	
+	var maze_data = _generate_logic()
+	
+	for x in range(SEGMENT_WIDTH):
+		for z in range(SEGMENT_HEIGHT):
+			var pos = Vector3(x * CELL_SIZE_X, 0, z * CELL_SIZE_Z)
+			_add_obj(floor_scene, segment_node, pos)
+			_add_obj(floor_scene, segment_node, pos + Vector3(0, CEILING_Y, 0))
+			
+			if maze_data[x][z] == 0:
+				var wall_pos = pos + Vector3(0, CEILING_Y / 2.0, 0)
+				if x == 0 or x == SEGMENT_WIDTH - 1:
+					_add_scaled_obj(edge_wall_scene, segment_node, wall_pos, WALL_SCALE_Y)
+				else:
+					_add_scaled_obj(wall_scene, segment_node, wall_pos, WALL_SCALE_Y)
+
+	# СПАВН МАНЕКЕНОВ (3-5 штук)
+	for i in range(randi_range(3, 5)):
+		var rx = randf_range(CELL_SIZE_X, (SEGMENT_WIDTH - 2) * CELL_SIZE_X)
+		var rz = randf_range(0, SEGMENT_HEIGHT * CELL_SIZE_Z)
+		_add_obj(mannequin_scene, segment_node, Vector3(rx, 0, rz))
+	
+	last_real_z += SEGMENT_HEIGHT * CELL_SIZE_Z
+
+func _add_scaled_obj(scene, parent, pos, scale_y):
+	var inst = scene.instantiate()
+	parent.add_child(inst)
+	inst.position = pos
+	inst.scale.y = scale_y
+
+func _replace_phantom_with_real():
+	if phantom_segments.is_empty(): return
+	var old_phantom = phantom_segments.pop_front()
+	if is_instance_valid(old_phantom): old_phantom.queue_free()
+	_spawn_real_segment()
+	_spawn_phantom_segment()
+
+func _add_obj(scene, parent, pos):
+	if not scene: return
+	var inst = scene.instantiate()
+	parent.add_child(inst)
+	inst.position = pos
+
+func _generate_logic():
+	var data = []
+	for x in range(SEGMENT_WIDTH):
+		data.append([])
+		for z in range(SEGMENT_HEIGHT):
+			if x == 0 or x == SEGMENT_WIDTH - 1: data[x].append(0)
+			elif x == int(SEGMENT_WIDTH/2): data[x].append(1)
+			else: data[x].append(1 if randf() > 0.3 else 0)
+	return data
+
+func _setup_ui():
+	var canvas = CanvasLayer.new()
+	add_child(canvas)
+	status_label.position = Vector2(20, 20)
+	status_label.add_theme_color_override(\"font_color\", Color.YELLOW)
+	canvas.add_child(status_label)
+
+func _game_over(reason):
+	get_tree().reload_current_scene()
+"
+
+[node name="Node3D" type="Node3D" unique_id=934433196]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1718685077]
+environment = SubResource("Environment_763b7")
+
+[node name="world" type="Node3D" parent="." unique_id=674174601]
+
+[node name="CSGBox3D" type="CSGBox3D" parent="world" unique_id=1597253266]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.2225952, -0.21271288, -4.6696777)
+material_override = SubResource("StandardMaterial3D_p5a0g")
+use_collision = true
+size = Vector3(8.690308, 0.076660156, 11.015137)
+material = SubResource("StandardMaterial3D_tuxin")
+
+[node name="labirint" type="Marker3D" parent="world/CSGBox3D" unique_id=1806068504]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.06999993, 0.206, -5.875778)
+
+[node name="player" type="Node3D" parent="." unique_id=83921692]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.5429878, 1.8056964, -1.3083329)
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="player" unique_id=1076638024]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3112793, -0.9117125, 0.16894531)
+script = SubResource("GDScript_8lh4o")
+
+[node name="MeshPlayer" type="MeshInstance3D" parent="player/CharacterBody3D" unique_id=174980737]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.10198569, 0)
+mesh = SubResource("CapsuleMesh_il0eq")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="player/CharacterBody3D" unique_id=830548400]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06055796, 0)
+shape = SubResource("CapsuleShape3D_acxsc")
+
+[node name="Camera3D" type="Camera3D" parent="player/CharacterBody3D" unique_id=1765514121]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.04904127, 0.6953789, -0.16894531)
+current = true
+script = SubResource("GDScript_k3iel")
+
+[node name="TextEdit" type="TextEdit" parent="player/CharacterBody3D/Camera3D" unique_id=627477448]
+anchors_preset = -1
+anchor_right = 0.333
+anchor_bottom = 0.35300002
+offset_right = -375.616
+offset_bottom = -220.744
+text = "the fog is coming"
+metadata/_edit_use_anchors_ = true
+
+[node name="hud" type="CanvasLayer" parent="player/CharacterBody3D/Camera3D" unique_id=1485840541]
+
+[node name="Interface" type="Control" parent="player/CharacterBody3D/Camera3D/hud" unique_id=1879967782]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1179.0
+offset_bottom = 694.0
+metadata/_edit_use_anchors_ = true
+
+[node name="hungry" type="Label" parent="player/CharacterBody3D/Camera3D/hud/Interface" unique_id=1695417476]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = -0.0067854114
+anchor_top = -0.23919308
+anchor_right = -0.0067854114
+anchor_bottom = -0.23919308
+offset_left = 9.0
+offset_top = 148.0
+offset_right = 461.0
+offset_bottom = 282.0
+theme_override_fonts/font = ExtResource("3_xqmyw")
+theme_override_font_sizes/font_size = 100
+text = "голод 100"
+metadata/_edit_use_anchors_ = true
+
+[node name="fogsound" type="AudioStreamPlayer3D" parent="player/CharacterBody3D" unique_id=900544964]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.2317085, -0.89398384, 1.1393876)
+stream = ExtResource("4_sw5c6")
+volume_db = 1.0
+
+[node name="Marker3D" type="Marker3D" parent="." unique_id=1813811549]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.39013, -0.14245637, 0.86371064)
+
+[node name="Marker3D" type="Marker3D" parent="Marker3D" unique_id=681867479]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5457792, 0.05731024, -10.864627)
+
+[node name="snack" type="Node3D" parent="." unique_id=129764114]
+transform = Transform3D(0.37, 0, 0, 0, 0.37, 0, 0, 0, 0.37, -5.5103927, -0.12227504, -4.500269)
+
+[node name="snack" type="Area3D" parent="snack" unique_id=534016725]
+script = SubResource("GDScript_2807j")
+
+[node name="snack_bar" parent="snack/snack" unique_id=497671021 instance=ExtResource("6_e23gp")]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="snack/snack" unique_id=1001584942]
+shape = SubResource("BoxShape3D_u7exk")
+
+[node name="WorldEnvironment2" type="WorldEnvironment" parent="." unique_id=365835591]
+environment = SubResource("Environment_db3q1")
+camera_attributes = SubResource("CameraAttributesPractical_8f8xc")
+compositor = SubResource("Compositor_g4q3a")
+
+[node name="AudioStreamPlayer3D" type="AudioStreamPlayer3D" parent="." unique_id=244717869]
+stream = ExtResource("7_rrolr")
+volume_db = 36.993
+autoplay = true
+parameters/looping = true
+
+[node name="LoadingScreen" type="CanvasLayer" parent="." unique_id=784659606]
+visible = false
+
+[node name="ColorRect" type="ColorRect" parent="LoadingScreen" unique_id=291678370]
+offset_right = 1194.0
+offset_bottom = 693.0
+color = Color(0.16565639, 0.16565642, 0.16565639, 1)
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=232415841]
+
+[node name="MadnessEffect" type="Control" parent="CanvasLayer" unique_id=1684912065]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+metadata/_edit_use_anchors_ = true
+
+[node name="GeminiGeneratedImage9e8Lgo9e8Lgo9e8l" type="Sprite2D" parent="CanvasLayer/MadnessEffect" unique_id=1915561104]
+position = Vector2(583.5, 332)
+scale = Vector2(0.83309656, 0.8697917)
+texture = ExtResource("8_gldgk")
+
+[node name="generation" type="Node3D" parent="." unique_id=1220239415]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.2225952, -0.21271288, -4.6696777)
+script = SubResource("GDScript_myf4l")

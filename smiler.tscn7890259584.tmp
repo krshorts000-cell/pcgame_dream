@@ -1,0 +1,54 @@
+[gd_scene format=3 uid="uid://d1ujojchjecm0"]
+
+[ext_resource type="PackedScene" uid="uid://neqvf1bevxc6" path="res://smily_horror_monster.glb" id="1_y686f"]
+[ext_resource type="AudioStream" uid="uid://doaahb4j7xar6" path="res://Final_Scream.mp3" id="2_cklaw"]
+
+[sub_resource type="GDScript" id="GDScript_cklaw"]
+script/source = "extends CharacterBody3D
+
+@export var speed = 4.0
+@export var sound_path = \"res://Final_Scream.mp3\" # Путь к звуку
+@export var kill_dist = 1.5 # Расстояние поимки
+
+var target = null
+
+func _ready():
+	# 1. Отвязываем от поезда (мировые координаты)
+	top_level = true 
+	
+	# 2. Ищем игрока
+	target = get_tree().get_first_node_in_group(\"player\")
+	
+	# 3. ВКЛЮЧАЕМ СТРАШНЫЙ ЗВУК СРАЗУ
+	var audio = AudioStreamPlayer3D.new()
+	if ResourceLoader.exists(sound_path):
+		audio.stream = load(sound_path)
+		audio.unit_size = 30.0 # Слышно издалека
+		audio.autoplay = true
+		add_child(audio)
+
+func _physics_process(_delta):
+	# 4. ДВИЖЕНИЕ БЕСКОНЕЧНО ПО Z (ИГНОР ПРЕПЯТСТВИЙ)
+	# Мы просто прибавляем скорость к позиции, игнорируя стены
+	global_position.z += speed * _delta
+
+func _trigger_screamer():
+	# ОТПРАВЛЯЕМ НА СЦЕНУ СКРИМЕРА
+	if abs(global_position.z - target.global_position.z) < 0.5:
+		get_tree().change_scene_to_file(\"res://ScreamerScene.tscn\")
+"
+
+[node name="Node3D" type="Node3D" unique_id=775402334]
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="." unique_id=424685078]
+transform = Transform3D(-0.9984602, 0.055472884, 0, -0.055472884, -0.9984602, 0, 0, 0, 1, 0, -0.22235513, 0)
+script = SubResource("GDScript_cklaw")
+
+[node name="Sketchfab_Scene" parent="CharacterBody3D" unique_id=1372196338 instance=ExtResource("1_y686f")]
+transform = Transform3D(0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01, 0, 0, 0.056)
+
+[node name="KillZone" type="Area3D" parent="CharacterBody3D" unique_id=644190039]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.89794934, 0.9457221, 0.33081138)
+
+[node name="smiler" type="AudioStreamPlayer3D" parent="." unique_id=576770047]
+stream = ExtResource("2_cklaw")

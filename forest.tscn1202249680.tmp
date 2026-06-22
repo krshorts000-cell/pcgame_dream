@@ -1,0 +1,411 @@
+[gd_scene format=3 uid="uid://cg687k6imr6g5"]
+
+[ext_resource type="FontFile" uid="uid://sualh4l2w036" path="res://ofont.ru_Downcome.ttf" id="1_uq144"]
+[ext_resource type="Shader" uid="uid://dhtpcih7kocrj" path="res://shop.gdshader" id="2_mvm06"]
+[ext_resource type="AudioStream" uid="uid://strcy7jxthki" path="res://REPULSIVE_-_Cry_Of_The_Unheard_77904451.mp3" id="2_vmuxp"]
+[ext_resource type="PackedScene" uid="uid://fdvpeni0sk1e" path="res://forest.glb" id="3_vmuxp"]
+[ext_resource type="PackedScene" uid="uid://n0ekjpuo0x32" path="res://goliath_birdeater.glb" id="5_vmuxp"]
+
+[sub_resource type="GDScript" id="GDScript_8im6m"]
+script/source = "extends CharacterBody3D
+
+@export var speed: float = 5.0
+var current_madness = 0.0
+
+@onready var madness_ui = get_tree().root.find_child(\"MadnessEffect\", true, false)
+
+func _ready():
+	add_to_group(\"player\")
+
+func _physics_process(delta):
+	# --- ПРИМЕНЯЕМ СЛОЖНОСТЬ (СКОРОСТЬ) ---
+	var current_speed = speed
+	if DifficultyManager:
+		current_speed = speed * DifficultyManager.player_speed_mult
+
+	# WASD Движение
+	var input_dir = Vector2.ZERO
+	if Input.is_key_pressed(KEY_W): input_dir.y -= 1
+	if Input.is_key_pressed(KEY_S): input_dir.y += 1
+	if Input.is_key_pressed(KEY_A): input_dir.x -= 1
+	if Input.is_key_pressed(KEY_D): input_dir.x += 1
+	
+	var dir = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	
+	if dir:
+		velocity.x = dir.x * current_speed
+		velocity.z = dir.z * current_speed
+	else:
+		velocity.x = move_toward(velocity.x, 0, current_speed)
+		velocity.z = move_toward(velocity.z, 0, current_speed)
+	
+	if not is_on_floor(): 
+		velocity.y -= 20.0 * delta
+		
+	move_and_slide()
+	
+	# --- ЛОГИКА БЕЗУМИЯ (Зависит от сложности) ---
+	var m_mult = 1.0
+	var diff = 0
+	if DifficultyManager:
+		m_mult = DifficultyManager.madness_mult
+		diff = DifficultyManager.current_difficulty
+	
+	# Базовый рост: 10 очков за 60 сек (0.1667) * множитель сложности
+	# На кошмаре (x5) это будет уже 50 очков за минуту!
+	current_madness = move_toward(current_madness, 100.0, 0.1667 * m_mult * delta)
+		
+	# Визуальный эффект (Рожи)
+	if madness_ui:
+		# На Кошмаре рожи начинают лезть раньше (с 30 безумия)
+		var threshold = 70.0 if diff < 2 else 30.0
+		var max_alpha = 1.0 if diff == 2 else 0.7 # На кошмаре рожи четче
+		
+		var madness_alpha = clamp((current_madness - threshold) / (100.0 - threshold), 0.0, max_alpha)
+		madness_ui.modulate.a = madness_alpha
+
+func get_madness_percent():
+	return current_madness
+"
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_dvh0n"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_d8dn4"]
+
+[sub_resource type="GDScript" id="GDScript_5rndp"]
+script/source = "extends Camera3D
+
+# --- Настройки ---
+const MOUSE_SENS = 0.12
+
+# --- Система выживания ---
+var hunger = 100.0
+# В магазине туман обычно декоративный, но таймер оставим, если он нужен по сюжету
+var fog_timer = 100.0 
+const HUNGER_DECAY = 0.8
+const FOG_DECAY = 1.2
+
+# --- Настройки покачивания ---
+const BOB_FREQ = 2.4
+const BOB_AMP = 0.06
+var t_bob = 0.0
+
+# Пути к UI (проверь, чтобы в сцене shop структура узлов была такой же)
+@onready var hunger_label = get_node_or_null(\"hud/Interface/hungry\") 
+
+func _ready():
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	# Принудительное обновление текста при старте
+	if hunger_label:
+		hunger_label.text = \"Выносливость: 100%\"
+	
+	# Настраиваем визуал (дальность прорисовки и т.д.)
+	await get_tree().process_frame
+	_apply_shop_settings()
+
+func _input(event):
+	if event is InputEventMouseMotion:
+		# Вращаем игрока (родителя)
+		var parent = get_parent()
+		if parent is Node3D:
+			parent.rotate_y(deg_to_rad(-event.relative.x * MOUSE_SENS))
+		
+		# Вращаем саму камеру (вверх-вниз)
+		rotate_x(deg_to_rad(-event.relative.y * MOUSE_SENS))
+		rotation.x = clamp(rotation.x, deg_to_rad(-85), deg_to_rad(85))
+
+func _process(delta):
+	_process_survival(delta)
+	_handle_head_bob(delta)
+	
+	# Эффекты безумия на камеру (тряска), если сложность \"Кошмар\"
+	_apply_madness_effects()
+
+func _process_survival(delta):
+	# Берем множители из нашего глобального менеджера
+	var h_mult = 1.0
+	var f_mult = 1.0
+	
+	if DifficultyManager:
+		h_mult = DifficultyManager.hunger_rate_mult
+		f_mult = DifficultyManager.madness_mult 
+
+	# Уменьшаем показатели
+	hunger -= (HUNGER_DECAY * h_mult) * delta
+	fog_timer -= (FOG_DECAY * f_mult) * delta
+	
+	# Обновление UI
+	if hunger_label: 
+		hunger_label.text = \"Выносливость: \" + str(int(max(0, hunger))) + \"%\"
+	
+	# Смерть
+	if hunger <= 0 or fog_timer <= 0:
+		_go_to_menu()
+
+func _apply_madness_effects():
+	# Тряска камеры только на Кошмаре при высоком безумии
+	if DifficultyManager and DifficultyManager.current_difficulty == 2:
+		var parent = get_parent()
+		if \"current_madness\" in parent:
+			var m = parent.current_madness
+			if m > 50.0:
+				var shake = (m / 100.0) * 0.03 # Легкая тряска
+				self.h_offset = randf_range(-shake, shake)
+				self.v_offset = randf_range(-shake, shake)
+
+func _apply_shop_settings():
+	# В магазине ставим стандартную видимость из менеджера
+	if DifficultyManager:
+		self.far = DifficultyManager.fog_distance
+	
+	# Если в магазине есть Environment, можно подкрутить его тут
+	var env = get_world_3d().fallback_environment
+	if env:
+		# В магазине туман обычно слабее, чтобы видеть товары
+		env.fog_enabled = true
+		env.fog_density = 0.01 
+
+func _handle_head_bob(delta):
+	var parent = get_parent()
+	if parent is CharacterBody3D and parent.is_on_floor() and parent.velocity.length() > 0.1:
+		t_bob += delta * parent.velocity.length()
+	else:
+		t_bob = move_toward(t_bob, 0, delta * 2)
+	
+	transform.origin.y = sin(t_bob * BOB_FREQ) * BOB_AMP
+	transform.origin.x = cos(t_bob * BOB_FREQ / 2) * BOB_AMP
+
+func _go_to_menu():
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	get_tree().change_scene_to_file(\"res://menu.tscn\")
+
+func add_food(amount):
+	hunger = clamp(hunger + amount, 0, 100)
+"
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_s4ejc"]
+shader = ExtResource("2_mvm06")
+
+[sub_resource type="GDScript" id="GDScript_m3mdi"]
+script/source = "extends Node3D
+
+func _ready():
+	# 1. Ищем внутри Sketchfab_Scene узел с сеткой (MeshInstance3D)
+	# Обычно импортированные модели имеют сложную иерархию, поэтому ищем рекурсивно
+	_create_collision_for_all_meshes(self)
+
+func _create_collision_for_all_meshes(node):
+	if node is MeshInstance3D:
+		# Генерируем коллизию на основе меша
+		# Это создаст StaticBody3D и CollisionShape3D как дочерние узлы
+		node.create_trimesh_collision()
+		print(\"--- КОЛЛИЗИЯ: Создана для \", node.name, \" ---\")
+	
+	# Проходимся по всем дочерним узлам (рекурсия)
+	for child in node.get_children():
+		_create_collision_for_all_meshes(child)
+"
+
+[sub_resource type="GDScript" id="GDScript_vmuxp"]
+script/source = "extends CharacterBody3D
+
+# --- НАСТРОЙКИ ФИЗИКИ И СКОРОСТИ ---
+@export var walk_speed = 1.0
+@export var run_speed = 4.0
+@export var gravity = 40.0
+@export var view_distance = 40.0
+
+# --- НАСТРОЙКИ ПАТРУЛЯ (КВАДРАТ) ---
+@export var square_size = 30.0 # Размер стороны квадрата
+var patrol_points = []
+var current_point_idx = 0
+var wait_timer = 0.0
+
+enum State { PATROL, CHASE }
+var current_state = State.PATROL
+
+var target = null
+
+func _ready():
+	add_to_group(\"monster\")
+	# 2. Настройка патруля по квадрату
+	_setup_square_patrol()
+	
+
+	# Ищем игрока
+	await get_tree().create_timer(0.5).timeout
+	target = get_tree().get_first_node_in_group(\"player\")
+
+func _physics_process(delta):
+	# Гравитация, чтобы не летал
+	if not is_on_floor():
+		velocity.y -= gravity * delta
+	else:
+		velocity.y = -0.1
+
+	match current_state:
+		State.PATROL:
+			_patrol_logic(delta)
+			_check_vision()
+		State.CHASE:
+			_chase_logic()
+
+	move_and_slide()
+
+# --- ЛОГИКА ПАТРУЛЯ (КВАДРАТ) ---
+func _setup_square_patrol():
+	var pos = global_position
+	# Генерируем 4 точки квадрата относительно начальной позиции
+	patrol_points = [
+		pos + Vector3(square_size, 0, 0),
+		pos + Vector3(square_size, 0, square_size),
+		pos + Vector3(0, 0, square_size),
+		pos
+	]
+
+func _patrol_logic(delta):
+	var target_pos = patrol_points[current_point_idx]
+	var dist = global_position.distance_to(target_pos)
+	
+	if dist > 0.5:
+		var dir = (target_pos - global_position).normalized()
+		velocity.x = dir.x * walk_speed
+		velocity.z = dir.z * walk_speed
+	else:
+		# Дошли до точки, ждем секунду и идем к следующей
+		velocity.x = 0
+		velocity.z = 0
+		wait_timer += delta
+		if wait_timer > 1.0:
+			current_point_idx = (current_point_idx + 1) % patrol_points.size()
+			wait_timer = 0.0
+
+	# Если уперся в стену раньше времени — переходим к следующей точке
+	if is_on_wall():
+		current_point_idx = (current_point_idx + 1) % patrol_points.size()
+
+# --- ЛОГИКА ПОГОНИ ---
+func _chase_logic():
+	if not target: 
+		current_state = State.PATROL
+		return
+	
+	var dir = (target.global_position - global_position).normalized()
+	velocity.x = dir.x * run_speed
+	velocity.z = dir.z * run_speed
+	
+	
+	if global_position.distance_to(target.global_position) < 1.7:
+		get_tree().change_scene_to_file(\"res://ScreamerScene.tscn\")
+
+# --- ЗРЕНИЕ ---
+func _check_vision():
+	if not target: return
+	var dist = global_position.distance_to(target.global_position)
+	
+	# Чует за спиной на 5 метрах, видит впереди на 25
+	if dist < 5.0:
+		current_state = State.CHASE
+	elif dist < view_distance:
+		var forward = -global_transform.basis.z 
+		var to_player = (target.global_position - global_position).normalized()
+		if forward.dot(to_player) > 0.3:
+			current_state = State.CHASE
+
+	# 1. Ищем внутри Sketchfab_Scene узел с сеткой (MeshInstance3D)
+	# Обычно импортированные модели имеют сложную иерархию, поэтому ищем рекурсивно
+	_create_collision_for_all_meshes(self)
+
+func _create_collision_for_all_meshes(node):
+	if node is MeshInstance3D:
+		# Генерируем коллизию на основе меша
+		# Это создаст StaticBody3D и CollisionShape3D как дочерние узлы
+		node.create_trimesh_collision()
+		print(\"--- КОЛЛИЗИЯ: Создана для \", node.name, \" ---\")
+	
+	# Проходимся по всем дочерним узлам (рекурсия)
+	for child in node.get_children():
+		_create_collision_for_all_meshes(child)
+"
+
+[node name="Node3D" type="Node3D" unique_id=1169276138]
+
+[node name="player" type="Node3D" parent="." unique_id=184451332]
+transform = Transform3D(1.2, 0, 0, 0, 1.2, 0, 0, 0, 1.2, 0, 10.78417, 0)
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="player" unique_id=612199252]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3112793, -0.9117125, 0.16894531)
+script = SubResource("GDScript_8im6m")
+
+[node name="MeshPlayer" type="MeshInstance3D" parent="player/CharacterBody3D" unique_id=2137463021]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.10198569, 0)
+mesh = SubResource("CapsuleMesh_dvh0n")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="player/CharacterBody3D" unique_id=251864187]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06055796, 0)
+shape = SubResource("CapsuleShape3D_d8dn4")
+
+[node name="Camera3D" type="Camera3D" parent="player/CharacterBody3D" unique_id=2057593239]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.04904127, 0.6953789, -0.16894531)
+current = true
+script = SubResource("GDScript_5rndp")
+
+[node name="TextEdit" type="TextEdit" parent="player/CharacterBody3D/Camera3D" unique_id=1973594933]
+anchors_preset = -1
+anchor_right = 0.333
+anchor_bottom = 0.35300002
+offset_right = -375.616
+offset_bottom = -220.744
+text = "the fog is coming"
+metadata/_edit_use_anchors_ = true
+
+[node name="hud" type="CanvasLayer" parent="player/CharacterBody3D/Camera3D" unique_id=730949600]
+
+[node name="Interface" type="Control" parent="player/CharacterBody3D/Camera3D/hud" unique_id=1446774192]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1179.0
+offset_bottom = 694.0
+metadata/_edit_use_anchors_ = true
+
+[node name="hungry" type="Label" parent="player/CharacterBody3D/Camera3D/hud/Interface" unique_id=1022829593]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.0008481764
+anchor_top = -0.1815562
+anchor_right = 0.0008481764
+anchor_bottom = -0.1815562
+offset_left = 9.0
+offset_top = 148.0
+offset_right = 461.0
+offset_bottom = 282.0
+theme_override_fonts/font = ExtResource("1_uq144")
+theme_override_font_sizes/font_size = 50
+text = "выносливость 100"
+metadata/_edit_use_anchors_ = true
+
+[node name="fogsound" type="AudioStreamPlayer3D" parent="player" unique_id=130094154]
+transform = Transform3D(0.83333325, 0, 0, 0, 0.83333325, 0, 0, 0, 0.83333325, 134.78525, -46.236134, 50.172714)
+stream = ExtResource("2_vmuxp")
+volume_db = 13.308
+autoplay = true
+parameters/looping = true
+
+[node name="ColorRect" type="CanvasLayer" parent="." unique_id=636352241]
+
+[node name="ColorRect" type="ColorRect" parent="ColorRect" unique_id=1275443536]
+material = SubResource("ShaderMaterial_s4ejc")
+offset_right = 1155.0
+offset_bottom = 654.0
+metadata/_edit_use_anchors_ = true
+
+[node name="Sketchfab_Scene" parent="." unique_id=1694542342 instance=ExtResource("3_vmuxp")]
+transform = Transform3D(50, 0, 0, 0, 50, 0, 0, 0, 50, 0.15689611, 0, 3.2378848)
+script = SubResource("GDScript_m3mdi")
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="." unique_id=1163086924]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -88.75983, 0, -193.67206)
+script = SubResource("GDScript_vmuxp")
+
+[node name="Sketchfab_Scene2" parent="CharacterBody3D" unique_id=1197945865 instance=ExtResource("5_vmuxp")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 80.00339, 0, 132.94136)

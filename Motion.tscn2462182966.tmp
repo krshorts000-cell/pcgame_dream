@@ -1,0 +1,306 @@
+[gd_scene format=3 uid="uid://db5ohairt1ft2"]
+
+[ext_resource type="FontFile" uid="uid://sualh4l2w036" path="res://ofont.ru_Downcome.ttf" id="1_cdd1w"]
+[ext_resource type="AudioStream" uid="uid://buj55d55yge5x" path="res://sound1.mp3" id="2_4csm4"]
+[ext_resource type="PackedScene" uid="uid://ddy8i3yru5g76" path="res://flashlight.fbx" id="3_a25oh"]
+
+[sub_resource type="GDScript" id="GDScript_qlfv2"]
+script/source = "extends Node3D
+
+@export var vagon_scene: PackedScene = preload(\"res://labirint.tscn\")
+@export var max_vagons: int = 5
+
+var spawned_vagons = []
+
+func _ready():
+	print(\"Братишка, стыковочные узлы прогреты. Начинаем формирование состава!\")
+	# Спавним самый первый вагон в (0,0,0)
+	var first = vagon_scene.instantiate()
+	add_child(first)
+	spawned_vagons.append(first)
+	
+	# Добавляем остальные
+	for i in range(max_vagons - 1):
+		spawn_next_vagon()
+
+func spawn_next_vagon():
+	# 1. Берем последний вагон в очереди
+	var prev_vagon = spawned_vagons.back()
+	var exit_node = prev_vagon.get_node(\"end\")
+	
+	# 2. Создаем новый вагон
+	var new_vagon = vagon_scene.instantiate()
+	add_child(new_vagon)
+	
+	# 3. МАГИЯ СТЫКОВКИ
+	# Сначала приравниваем трансформацию нового вагона к выходу старого
+	new_vagon.global_transform = exit_node.global_transform
+	
+	# Теперь нужно сместить его так, чтобы его собственный \"start\" совпал с \"end\" старого
+	# Для этого мы берем локальную позицию его \"start\" и вычитаем её
+	var start_node_pos = new_vagon.get_node(\"start\").position
+	new_vagon.position -= new_vagon.transform.basis * start_node_pos
+	
+	spawned_vagons.append(new_vagon)
+	
+	# Если вагонов слишком много — удаляем старый сзади
+	if spawned_vagons.size() > max_vagons:
+		var old = spawned_vagons.pop_front()
+		old.queue_free()
+
+func _process(_delta):
+	# Простая проверка: если игрок зашел в последний вагон — спавним новый
+	var player = get_node_or_null(\"../player\") # Проверь путь к игроку!
+	if player:
+		var last_vagon = spawned_vagons.back()
+		if player.global_position.distance_to(last_vagon.global_position) < 10.0:
+			spawn_next_vagon()
+"
+
+[sub_resource type="GDScript" id="GDScript_4rqvv"]
+script/source = "extends CharacterBody3D
+
+@export var speed: float = 5.0
+var current_madness = 0.0
+var dark_timer = 0.0 
+
+@onready var flashlight = get_node_or_null(\"model/Flashlight\")
+@onready var madness_ui = get_tree().root.find_child(\"MadnessEffect\", true, false)
+
+func _ready():
+	add_to_group(\"player\")
+	# Скорость теперь берем из DifficultyManager напрямую в _physics_process
+	# чтобы не множить её каждый раз при старте
+
+func _physics_process(delta):
+	# Применяем скорость в зависимости от сложности
+	var current_speed = speed
+	if DifficultyManager:
+		current_speed = speed * DifficultyManager.player_speed_mult
+
+	var input_dir = Vector2.ZERO
+	if Input.is_key_pressed(KEY_W): input_dir.y -= 1
+	if Input.is_key_pressed(KEY_S): input_dir.y += 1
+	if Input.is_key_pressed(KEY_A): input_dir.x -= 1
+	if Input.is_key_pressed(KEY_D): input_dir.x += 1
+	
+	var dir = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	
+	if dir:
+		velocity.x = dir.x * current_speed
+		velocity.z = dir.z * current_speed
+	else:
+		velocity.x = move_toward(velocity.x, 0, current_speed)
+		velocity.z = move_toward(velocity.z, 0, current_speed)
+	
+	if not is_on_floor(): 
+		velocity.y -= 20.0 * delta
+	move_and_slide()
+	
+	# --- ЛОГИКА БЕЗУМИЯ ---
+	var light_on = false
+	if is_instance_valid(flashlight): light_on = flashlight.visible
+	
+	if light_on:
+		dark_timer = 0.0
+		current_madness = move_toward(current_madness, 0.0, 10.0 * delta)
+	else:
+		var m_mult = DifficultyManager.madness_mult if DifficultyManager else 1.0
+		dark_timer += delta * m_mult
+		if dark_timer >= 60.0:
+			current_madness = move_toward(current_madness, 100.0, 1.5 * m_mult * delta)
+		
+	# ИСПРАВЛЕННАЯ ВИДИМОСТЬ ЭФФЕКТА:
+	if madness_ui:
+		var diff = DifficultyManager.current_difficulty if DifficultyManager else 0
+		if diff == 2: # Только на Кошмаре экран темнеет сильно
+			madness_ui.modulate.a = clamp((current_madness - 15.0) / 85.0, 0, 0.9)
+		else: # На норме и харде — почти незаметно
+			madness_ui.modulate.a = clamp((current_madness - 60.0) / 40.0, 0, 0.3)
+
+func _input(event):
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F:
+		if is_instance_valid(flashlight):
+			flashlight.visible = !flashlight.visible
+"
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_umfjx"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_0xa6t"]
+
+[sub_resource type="GDScript" id="GDScript_1tfom"]
+script/source = "extends Camera3D
+
+# --- Настройки управления ---
+const MOUSE_SENS = 0.12
+
+# --- Система выживания ---
+var hunger = 100.0
+var fog_timer = 100.0
+const HUNGER_DECAY = 0.8
+const FOG_DECAY = 1.2
+
+# --- Настройки покачивания (Head Bob) ---
+const BOB_FREQ = 2.4
+const BOB_AMP = 0.06
+var t_bob = 0.0
+
+@onready var hunger_label = get_node_or_null(\"hud/Interface/hungry\")
+
+func _ready():
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	# Даем кадру прогрузиться для корректной работы тумана
+	await get_tree().process_frame
+	apply_fog_settings()
+
+func _input(event):
+	# ВОЗВРАЩАЕМ ПОВОРОТ МЫШИ
+	if event is InputEventMouseMotion:
+		if get_parent() is Node3D:
+			get_parent().rotate_y(deg_to_rad(-event.relative.x * MOUSE_SENS))
+		
+		rotate_x(deg_to_rad(-event.relative.y * MOUSE_SENS))
+		rotation.x = clamp(rotation.x, deg_to_rad(-85), deg_to_rad(85))
+
+func _process(delta):
+	_process_survival(delta)
+	_handle_head_bob(delta) # ВОЗВРАЩАЕМ ПОКАЧИВАНИЕ ПРИ ХОДЬБЕ
+	
+	# --- Логика Безумия (Тряска и сужение обзора) ---
+	if DifficultyManager and DifficultyManager.current_difficulty == 2:
+		var parent = get_parent()
+		if \"current_madness\" in parent:
+			var m = parent.current_madness
+			if m > 50.0:
+				var shake = (m / 100.0) * 0.04
+				self.h_offset = randf_range(-shake, shake)
+				self.v_offset = randf_range(-shake, shake)
+			
+			var base_fog = DifficultyManager.fog_distance
+			self.far = lerp(base_fog, 6.0, m / 100.0)
+	else:
+		if DifficultyManager:
+			self.far = DifficultyManager.fog_distance
+		self.h_offset = 0
+		self.v_offset = 0
+
+func _process_survival(delta):
+	var h_m = DifficultyManager.hunger_rate_mult if DifficultyManager else 1.0
+	var f_m = DifficultyManager.madness_mult if DifficultyManager else 1.0
+	
+	hunger -= (HUNGER_DECAY * h_m) * delta
+	fog_timer -= (FOG_DECAY * f_m) * delta
+	
+	if hunger_label:
+		hunger_label.text = \"Голод: \" + str(int(max(0, hunger))) + \"%\"
+	
+	if hunger <= 0 or fog_timer <= 0:
+		_go_to_menu()
+
+func apply_fog_settings():
+	if not DifficultyManager: return
+	
+	var env = get_world_3d().fallback_environment
+	if env:
+		env.fog_enabled = true
+		if DifficultyManager.current_difficulty == 2:
+			env.fog_density = 0.2
+		else:
+			env.fog_density = 0.02
+			
+		var scene = get_tree().current_scene.name.to_lower()
+		if \"level2\" in scene:
+			env.fog_light_color = Color(0.7, 0.7, 0.7)
+		else:
+			env.fog_light_color = Color(0, 0, 0)
+			
+		env.fog_depth_end = DifficultyManager.fog_distance
+		self.far = DifficultyManager.fog_distance
+
+func _handle_head_bob(delta):
+	var parent = get_parent()
+	if parent is CharacterBody3D and parent.is_on_floor() and parent.velocity.length() > 0.1:
+		t_bob += delta * parent.velocity.length()
+	else:
+		t_bob = move_toward(t_bob, 0, delta * 2)
+	
+	transform.origin.y = sin(t_bob * BOB_FREQ) * BOB_AMP
+	transform.origin.x = cos(t_bob * BOB_FREQ / 2) * BOB_AMP
+
+func _go_to_menu():
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	get_tree().change_scene_to_file(\"res://menu.tscn\")
+# Добавь это в самый конец Camera3D.gd
+func add_food(amount):
+	hunger = clamp(hunger + amount, 0, 100)
+	print(\"Поел! Текущий голод: \", hunger)
+"
+
+[node name="Node3D" type="Node3D" unique_id=926208469]
+script = SubResource("GDScript_qlfv2")
+
+[node name="player" type="Node3D" parent="." unique_id=107781357]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2731485, 0)
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="player" unique_id=1779837484]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3112793, -0.9117125, 0.16894531)
+script = SubResource("GDScript_4rqvv")
+
+[node name="MeshPlayer" type="MeshInstance3D" parent="player/CharacterBody3D" unique_id=1024909979]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.10198569, 0)
+mesh = SubResource("CapsuleMesh_umfjx")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="player/CharacterBody3D" unique_id=242661541]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06055796, 0)
+shape = SubResource("CapsuleShape3D_0xa6t")
+
+[node name="Camera3D" type="Camera3D" parent="player/CharacterBody3D" unique_id=237790594]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.04904127, 0.6953789, -0.16894531)
+script = SubResource("GDScript_1tfom")
+
+[node name="TextEdit" type="TextEdit" parent="player/CharacterBody3D/Camera3D" unique_id=1608566268]
+anchors_preset = -1
+anchor_right = 0.333
+anchor_bottom = 0.35300002
+offset_right = -375.616
+offset_bottom = -220.744
+text = "the fog is coming"
+metadata/_edit_use_anchors_ = true
+
+[node name="hud" type="CanvasLayer" parent="player/CharacterBody3D/Camera3D" unique_id=502937344]
+
+[node name="Interface" type="Control" parent="player/CharacterBody3D/Camera3D/hud" unique_id=1321590828]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1179.0
+offset_bottom = 694.0
+metadata/_edit_use_anchors_ = true
+
+[node name="hungry" type="Label" parent="player/CharacterBody3D/Camera3D/hud/Interface" unique_id=2080230457]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = -0.0067854114
+anchor_top = -0.23919308
+anchor_right = -0.0067854114
+anchor_bottom = -0.23919308
+offset_left = 9.0
+offset_top = 148.0
+offset_right = 461.0
+offset_bottom = 282.0
+theme_override_fonts/font = ExtResource("1_cdd1w")
+theme_override_font_sizes/font_size = 100
+text = "голод 100"
+metadata/_edit_use_anchors_ = true
+
+[node name="fogsound" type="AudioStreamPlayer3D" parent="player/CharacterBody3D" unique_id=615666633]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.2317085, -0.89398384, 1.1393876)
+stream = ExtResource("2_4csm4")
+volume_db = 1.0
+
+[node name="model" parent="player/CharacterBody3D" unique_id=2077558121 instance=ExtResource("3_a25oh")]
+transform = Transform3D(-0.97552687, 0, -0.2198803, -0.09218744, 0.9078653, 0.4090013, 0.19962169, 0.41926193, -0.885647, -0.21243525, -0.39916646, -0.49990964)
+
+[node name="Flashlight" type="OmniLight3D" parent="player/CharacterBody3D/model" unique_id=1610401238]
+transform = Transform3D(-0.97552687, 0.21943866, -0.013928972, 0, -0.063347995, -0.9979915, -0.21988028, -0.9735675, 0.06179771, -0.02740407, 0.15654957, 0.49738932)
+light_color = Color(0.5163187, 0.51631814, 3.85046e-07, 1)
+shadow_enabled = true

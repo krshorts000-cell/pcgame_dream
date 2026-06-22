@@ -1,0 +1,484 @@
+[gd_scene format=3 uid="uid://dapu5c1nodn3p"]
+
+[ext_resource type="Texture2D" uid="uid://djdicoeayuoeq" path="res://Gemini_Generated_Image_p7y601p7y601p7y6.png" id="1_f3sb7"]
+[ext_resource type="FontFile" uid="uid://sualh4l2w036" path="res://ofont.ru_Downcome.ttf" id="2_aqk2v"]
+[ext_resource type="Texture2D" uid="uid://dpdgl3a8v6viy" path="res://фог.png" id="2_dwbse"]
+[ext_resource type="PackedScene" uid="uid://cai2t0isx6j8k" path="res://snack_bar.fbx" id="2_fj7yv"]
+[ext_resource type="AudioStream" uid="uid://buj55d55yge5x" path="res://sound1.mp3" id="2_tlwt5"]
+[ext_resource type="PackedScene" uid="uid://dqi52ghh44op2" path="res://Make_scp_096_0207004324_texture.fbx" id="6_pkg7o"]
+[ext_resource type="Texture2D" uid="uid://cttg0wo4qjq7x" path="res://Gemini_Generated_Image_l2uggbl2uggbl2ug.png" id="7_pkg7o"]
+
+[sub_resource type="GDScript" id="GDScript_fj7yv"]
+script/source = "extends Node3D
+var corridor_scene = preload(\"res://CorridorSegment.tscn\")
+var snack_scene = preload(\"res://Snack.tscn\")
+var last_corridor_position = Vector3.ZERO
+var monster_spawned = false
+
+func _ready():
+	# Создаем первые 3 сегмента при старте
+	for i in range(3):
+		_spawn_corridor()
+
+func _spawn_corridor():
+	var instance = corridor_scene.instantiate()
+	add_child(instance)
+	
+	# Ставим новый сегмент в точку выхода предыдущего
+	instance.global_position = last_corridor_position
+	
+	# Обновляем точку для следующего сегмента
+	# Ищем маркер выхода внутри созданного сегмента
+	var exit_point = instance.get_node(\"ExitPoint\")
+	last_corridor_position = exit_point.global_position
+	
+	# Спавним еду в этом сегменте
+	_spawn_snacks_in_segment(instance)
+	
+	# Соединяем триггер, чтобы он вызывал новый спавн
+	var trigger = instance.get_node(\"SpawnTrigger\")
+	trigger.body_entered.connect(_on_player_entered_trigger.bind(instance))
+	
+func _spawn_snacks_in_segment(segment):
+	# Ищем все точки спавна еды в сегменте
+	for point in segment.get_children():
+		if point.name.begins_with(\"SnackPoint\"):
+			# Шанс 30%, что в этой точке появится еда
+			if randf() < 0.3:
+				var snack = snack_scene.instantiate()
+				add_child(snack)
+				snack.global_position = point.global_position
+
+func _on_player_entered_trigger(body, segment):
+	if body is CharacterBody3D:
+		# Когда игрок входит в триггер, спавним следующий кусок
+		_spawn_corridor()
+		# Отключаем триггер, чтобы он не сработал дважды
+		var trigger = segment.get_node(\"SpawnTrigger\")
+		trigger.set_deferred(\"monitoring\", false)
+func _input(event):
+	# Проверяем, нажата ли клавиша Escape
+	if event.is_action_pressed(\"ui_cancel\"): 
+		# ui_cancel в Godot по умолчанию привязан к клавише Esc
+		get_tree().quit()
+	
+"
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_gv5m4"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_f3sb7"]
+sky_material = SubResource("ProceduralSkyMaterial_gv5m4")
+
+[sub_resource type="Environment" id="Environment_fj7yv"]
+background_mode = 2
+sky = SubResource("Sky_f3sb7")
+tonemap_mode = 2
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_tlwt5"]
+albedo_texture = ExtResource("1_f3sb7")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_gbfbk"]
+albedo_texture = ExtResource("2_dwbse")
+
+[sub_resource type="GDScript" id="GDScript_f3sb7"]
+script/source = "extends CharacterBody3D
+
+# --- Настройки скорости ---
+@export var walk_speed = 4.0      # Обычная ходьба
+@export var run_speed = 7.0       # Бег (Ctrl)
+@export var crouch_speed = 2.0    # Красться (Shift)
+@export var jump_velocity = 4.5   # Прыжок (Space)
+# --- Настройки плавности ---
+const ACCEL = 10.0
+const FRICTION = 8.0
+
+func _physics_process(delta: float) -> void:
+	# 1. Гравитация
+	if not is_on_floor():
+		velocity += get_gravity() * delta
+
+	# 2. Прыжок (Space)
+	if Input.is_action_just_pressed(\"ui_select\") and is_on_floor(): # ui_select по умолчанию Space
+		velocity.y = jump_velocity
+
+	# 3. Определяем текущую скорость (Бег / Красться / Ходьба)
+	var current_speed = walk_speed
+	
+	if Input.is_key_pressed(KEY_CTRL):
+		current_speed = run_speed
+	elif Input.is_key_pressed(KEY_SHIFT):
+		current_speed = crouch_speed
+
+	# 4. Обработка ввода WASD
+	var input_dir := Input.get_vector(\"ui_left\", \"ui_right\", \"ui_up\", \"ui_down\")
+	var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	
+	if direction:
+		velocity.x = move_toward(velocity.x, direction.x * current_speed, ACCEL * delta)
+		velocity.z = move_toward(velocity.z, direction.z * current_speed, ACCEL * delta)
+	else:
+		velocity.x = move_toward(velocity.x, 0, FRICTION * delta)
+		velocity.z = move_toward(velocity.z, 0, FRICTION * delta)
+
+	move_and_slide()
+func _ready():
+	# Добавляем этот узел в группу \"player\" программно
+	add_to_group(\"player\")
+"
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_aqk2v"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_036b0"]
+
+[sub_resource type="GDScript" id="GDScript_tlwt5"]
+script/source = "extends Camera3D
+
+# --- Настройки ---
+const MOUSE_SENS = 0.12
+
+# --- Система выживания ---
+var hunger = 100.0
+var fog_timer = 100.0
+const HUNGER_DECAY = 0.8
+const FOG_DECAY = 1.2
+
+# --- Настройки покачивания ---
+const BOB_FREQ = 2.4
+const BOB_AMP = 0.06
+var t_bob = 0.0
+
+@onready var hunger_bar = get_node_or_null(\"player/CharacterBody3D/Camera3D/hud/Interface/hungry\") 
+@onready var fog_bar = get_node_or_null(\"player/CharacterBody3D/Camera3D/hud/Interface/FogLabel\")
+
+func _ready():
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _input(event):
+	# Вращение камеры
+	if event is InputEventMouseMotion:
+		# Вращаем родителя (игрока) по горизонтали, если он есть
+		if get_parent() is Node3D:
+			get_parent().rotate_y(deg_to_rad(-event.relative.x * MOUSE_SENS))
+		
+		# Саму камеру вращаем по вертикали
+		rotate_x(deg_to_rad(-event.relative.y * MOUSE_SENS))
+		rotation.x = clamp(rotation.x, deg_to_rad(-85), deg_to_rad(85))
+
+func _process(delta):
+	# 1. Системы выживания
+	_process_survival(delta)
+	
+	# 2. Эффект покачивания (теперь зависит от скорости родителя)
+	_handle_head_bob(delta)
+
+# --- ИСПРАВЛЕННЫЕ ПУТИ ---
+# Теперь hunger ссылается на hungry, а fog на FogLabel
+@onready var hunger_label = get_node_or_null(\"hud/Interface/hungry\") 
+@onready var fog_label = get_node_or_null(\"hud/Interface/FogLabel\")
+
+# ... (остальной код до _process_survival оставляешь без изменений) ...
+
+func _process_survival(delta):
+	hunger -= HUNGER_DECAY * delta
+	fog_timer -= FOG_DECAY * delta
+	
+	# Обновляем текст на экране, превращая числа в строку (str) и отбрасывая дроби (int)
+	if hunger_label: 
+		hunger_label.text = \"Голод: \" + str(int(hunger)) + \"%\"
+		
+	if fog_label: 
+		fog_label.text = \"Fog is coming: \" + str(int(fog_timer))
+	
+	# Проверки на смерть
+	if hunger <= 0:
+		print(\"Умер от голода\")
+		_go_to_menu()
+	
+	if fog_timer <= 0:
+		print(\"THE FOG IS HERE\")
+# НОВАЯ ФУНКЦИЯ ДЛЯ ПЕРЕХОДА В МЕНЮ
+func _go_to_menu():
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE # Возвращаем курсор
+	get_tree().change_scene_to_file(\"res://menu.tscn\") # Укажи точный путь к сцене меню
+
+func _handle_head_bob(delta):
+	var parent = get_parent()
+	# Проверяем, движется ли родитель (CharacterBody3D)
+	if parent is CharacterBody3D and parent.is_on_floor() and parent.velocity.length() > 0.1:
+		t_bob += delta * parent.velocity.length()
+	else:
+		t_bob = move_toward(t_bob, 0, delta * 2)
+	
+	# Смещаем только локальную позицию камеры
+	transform.origin.y = sin(t_bob * BOB_FREQ) * BOB_AMP
+	transform.origin.x = cos(t_bob * BOB_FREQ / 2) * BOB_AMP
+
+func add_food(amount):
+	hunger = clamp(hunger + amount, 0, 100)
+"
+
+[sub_resource type="GDScript" id="GDScript_aqk2v"]
+script/source = "extends Area3D
+
+@export var food_value = 10.0 # Сколько голода восстановит этот предмет
+
+func _ready():
+	# Подключаем сигнал: когда какое-то тело входит в зону Area3D
+	body_entered.connect(_on_body_entered)
+
+func _on_body_entered(body):
+	# Проверяем, что вошедший объект — это игрок
+	if body is CharacterBody3D:
+		# Ищем камеру внутри игрока, так как шкала голода у нас в скрипте камеры
+		# Путь: Игрок -> Camera3D
+		var camera = body.get_node_or_null(\"Camera3D\")
+		
+		if camera and camera.has_method(\"add_food\"):
+			# Вызываем функцию добавления еды, которую мы писали ранее
+			camera.add_food(food_value)
+			print(\"Подобрал батончик! +10 к еде\")
+			
+			# Удаляем ТОЛЬКО этот конкретный объект из игры
+			queue_free()
+"
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_036b0"]
+
+[sub_resource type="Environment" id="Environment_tlwt5"]
+fog_enabled = true
+fog_light_energy = 0.53
+fog_density = 1.0
+fog_height = 271.31
+volumetric_fog_enabled = true
+volumetric_fog_density = 1.0
+volumetric_fog_albedo = Color(0.14406255, 0.14406255, 0.14406255, 1)
+volumetric_fog_emission = Color(0, 0.26907012, 0, 1)
+volumetric_fog_length = 0.01
+volumetric_fog_detail_spread = 6.0
+volumetric_fog_ambient_inject = 16.0
+
+[sub_resource type="CameraAttributesPractical" id="CameraAttributesPractical_aqk2v"]
+
+[sub_resource type="Compositor" id="Compositor_036b0"]
+
+[sub_resource type="GDScript" id="GDScript_dwbse"]
+script/source = "extends CharacterBody3D
+
+@export var walk_speed = 3.5
+@export var run_speed = 8.5
+@export var main_screen: String = \"res://menu.tscn\" # Укажи правильный путь к своему меню
+
+@onready var player = get_tree().get_first_node_in_group(\"player\")
+@onready var kill_zone = $KillZone
+@onready var screamer_ui = $ScreamerUI
+
+var is_killing = false
+
+func _ready():
+	# Прячем скример при спавне
+	screamer_ui.hide()
+	# Подключаем зону убийства
+	kill_zone.body_entered.connect(_on_kill_zone_entered)
+
+func _physics_process(delta):
+	# Если монстр уже поймал игрока или игрока нет на сцене — ничего не делаем
+	if is_killing or not player: 
+		return
+		
+	var current_speed = walk_speed
+	
+	# Логика реакции на действия игрока
+	if Input.is_key_pressed(KEY_CTRL):
+		# Игрок крадется (зажат Ctrl) — монстр останавливается во тьме
+		current_speed = 0.0 
+	elif not player.is_on_floor() or Input.is_key_pressed(KEY_SHIFT):
+		# Игрок прыгает или бежит — монстр впадает в ярость
+		current_speed = run_speed
+		
+	# Движение к игроку
+	if current_speed > 0:
+		# Вычисляем направление
+		var direction = global_position.direction_to(player.global_position)
+		direction.y = 0 # Чтобы монстр не взлетал в воздух
+		
+		velocity = direction * current_speed
+		move_and_slide()
+		
+		# Поворачиваем монстра лицом к игроку, чтобы выглядело жутко
+		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
+		look_at(look_pos, Vector3.UP)
+
+func _on_kill_zone_entered(body):
+	# Если в зону вошел игрок
+	if body.is_in_group(\"player\") and not is_killing:
+		is_killing = true
+		
+		# 1. Замораживаем физику монстра и игрока
+		set_physics_process(false)
+		body.set_physics_process(false)
+		
+		# 2. Показываем скример и играем звук
+		screamer_ui.show()
+		
+		# 3. Таймер на 10 секунд (код ставится на паузу на этой строке)
+		await get_tree().create_timer(10.0).timeout
+		
+		# 4. Возвращаем мышку и выкидываем в меню
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		get_tree().change_scene_to_file(main_screen)
+"
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ioo17"]
+size = Vector3(0.8378906, 1.6737213, 0.880249)
+
+[node name="Node3D" type="Node3D" unique_id=1332109019]
+script = SubResource("GDScript_fj7yv")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=712650813]
+environment = SubResource("Environment_fj7yv")
+
+[node name="world" type="Node3D" parent="." unique_id=1759656111]
+
+[node name="CSGBox3D" type="CSGBox3D" parent="world" unique_id=1420014466]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.2225952, -0.21271288, -4.6696777)
+use_collision = true
+size = Vector3(8.690308, 0.076660156, 11.015137)
+material = SubResource("StandardMaterial3D_tlwt5")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="world/CSGBox3D" unique_id=1803900491]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.07684, 2.2321377, 0.020458221)
+use_collision = true
+size = Vector3(0.3767395, 4.42395, 10.848999)
+material = SubResource("StandardMaterial3D_tlwt5")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="world/CSGBox3D/CSGBox3D" unique_id=1842102835]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.246273, -0.15734482, -0.1874752)
+material_override = SubResource("StandardMaterial3D_gbfbk")
+use_collision = true
+size = Vector3(0.3767395, 4.42395, 10.848999)
+material = SubResource("StandardMaterial3D_tlwt5")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="world/CSGBox3D/CSGBox3D/CSGBox3D" unique_id=1141432411]
+transform = Transform3D(0.014258888, -0.9998985, 0, 0.9998985, 0.014258888, 0, 0, 0, 1, -3.938977, 2.0406463, -0.052618027)
+use_collision = true
+size = Vector3(0.3767395, 8.189194, 10.579285)
+material = SubResource("StandardMaterial3D_tlwt5")
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="world/CSGBox3D/CSGBox3D/CSGBox3D" unique_id=428165606]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.3512545, -0.15734482, 5.21789)
+use_collision = true
+size = Vector3(8.340794, 4.42395, 0.038269043)
+material = SubResource("StandardMaterial3D_tlwt5")
+
+[node name="Marker3D" type="Marker3D" parent="world/CSGBox3D" unique_id=975112998]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.20559788, -5.507451)
+
+[node name="player" type="Node3D" parent="." unique_id=1333869302]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.5429878, 1.8056964, -1.3083329)
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="player" unique_id=279047123]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3112793, -0.9117125, 0.16894531)
+script = SubResource("GDScript_f3sb7")
+
+[node name="MeshPlayer" type="MeshInstance3D" parent="player/CharacterBody3D" unique_id=953597051]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.10198569, 0)
+mesh = SubResource("CapsuleMesh_aqk2v")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="player/CharacterBody3D" unique_id=1867170754]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06055796, 0)
+shape = SubResource("CapsuleShape3D_036b0")
+
+[node name="Camera3D" type="Camera3D" parent="player/CharacterBody3D" unique_id=1004224603]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.04904127, 0.6953789, -0.16894531)
+script = SubResource("GDScript_tlwt5")
+
+[node name="TextEdit" type="TextEdit" parent="player/CharacterBody3D/Camera3D" unique_id=83155365]
+anchors_preset = -1
+anchor_right = 0.333
+anchor_bottom = 0.35300002
+offset_right = -375.616
+offset_bottom = -220.744
+text = "the fog is coming"
+metadata/_edit_use_anchors_ = true
+
+[node name="hud" type="CanvasLayer" parent="player/CharacterBody3D/Camera3D" unique_id=1595752395]
+
+[node name="Interface" type="Control" parent="player/CharacterBody3D/Camera3D/hud" unique_id=1389676560]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1179.0
+offset_bottom = 694.0
+metadata/_edit_use_anchors_ = true
+
+[node name="FogLabel" type="Label" parent="player/CharacterBody3D/Camera3D/hud/Interface" unique_id=526202356]
+layout_mode = 0
+offset_right = 556.0
+offset_bottom = 143.0
+theme_override_colors/font_shadow_color = Color(0.87, 0, 0, 1)
+theme_override_fonts/font = ExtResource("2_aqk2v")
+theme_override_font_sizes/font_size = 100
+text = "the fog is coming 60"
+metadata/_edit_use_anchors_ = true
+
+[node name="hungry" type="Label" parent="player/CharacterBody3D/Camera3D/hud/Interface" unique_id=1935867159]
+layout_mode = 0
+offset_left = 9.0
+offset_top = 148.0
+offset_right = 461.0
+offset_bottom = 282.0
+theme_override_fonts/font = ExtResource("2_aqk2v")
+theme_override_font_sizes/font_size = 100
+text = "голод 100"
+metadata/_edit_use_anchors_ = true
+
+[node name="fogsound" type="AudioStreamPlayer3D" parent="player/CharacterBody3D" unique_id=1465647744]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.2317085, -0.89398384, 1.1393876)
+stream = ExtResource("2_tlwt5")
+volume_db = 1.0
+
+[node name="Marker3D" type="Marker3D" parent="." unique_id=1172657744]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.39013, -0.14245637, 0.86371064)
+
+[node name="Marker3D" type="Marker3D" parent="Marker3D" unique_id=190645453]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5457792, 0.05731024, -10.864627)
+
+[node name="snack" type="Node3D" parent="." unique_id=320171090]
+transform = Transform3D(0.37, 0, 0, 0, 0.37, 0, 0, 0, 0.37, -5.5103927, -0.12227504, -4.500269)
+
+[node name="snack" type="Area3D" parent="snack" unique_id=113023682]
+script = SubResource("GDScript_aqk2v")
+
+[node name="snack_bar" parent="snack/snack" unique_id=497671021 instance=ExtResource("2_fj7yv")]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="snack/snack" unique_id=562977260]
+shape = SubResource("BoxShape3D_036b0")
+
+[node name="WorldEnvironment2" type="WorldEnvironment" parent="." unique_id=501094540]
+environment = SubResource("Environment_tlwt5")
+camera_attributes = SubResource("CameraAttributesPractical_aqk2v")
+compositor = SubResource("Compositor_036b0")
+
+[node name="monster" type="CharacterBody3D" parent="." unique_id=820805295]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.2317085, -0.017233014, -6.942975)
+disable_mode = 2
+script = SubResource("GDScript_dwbse")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="monster" unique_id=1178554117]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.08105469, 1.1087875, 0.05987549)
+shape = SubResource("BoxShape3D_ioo17")
+debug_color = Color(0, 0.62076914, 0.56236935, 0.41960785)
+
+[node name="Make_scp_096_0207004324_texture" parent="monster/CollisionShape3D" unique_id=1553382882 instance=ExtResource("6_pkg7o")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.17296743, -0.13213539, -0.019598484)
+
+[node name="killzone" type="Area3D" parent="monster" unique_id=930761300]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.25402212, 1.1416593, 0.4491577)
+
+[node name="screamerUI" type="CanvasLayer" parent="monster" unique_id=359754119]
+visible = false
+
+[node name="GeminiGeneratedImageL2Uggbl2Uggbl2Ug" type="Sprite2D" parent="monster/screamerUI" unique_id=1003864785]
+position = Vector2(585, 323)
+texture = ExtResource("7_pkg7o")
